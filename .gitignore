@@ -1,0 +1,16 @@
+.Rproj.user
+.Rhistory
+*DS_Store
+
+data/
+results/
+
+Output/*RDA
+Output/*Rdata
+
+*err
+*out
+*html
+*png
+
+sandbox/
