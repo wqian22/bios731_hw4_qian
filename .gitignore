@@ -2,11 +2,8 @@
 .Rhistory
 *DS_Store
 
-data/
-results/
-
-Output/*RDA
-Output/*Rdata
+data
+results
 
 *err
 *out

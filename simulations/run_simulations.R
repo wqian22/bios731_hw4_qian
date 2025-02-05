@@ -35,8 +35,7 @@ registerDoParallel(cl)
 ## start simulation code
 ###############################################################
 
-for (scenario in c(10)) {
-#for (scenario in 1:nrow(params)) {
+for (scenario in 1:nrow(params)) {
   
   # define simulation scenario
   param <- params[scenario, ]
@@ -45,7 +44,7 @@ for (scenario in c(10)) {
   seed <- floor(runif(nsim, 1, 900))
   
   # use parallel computing for the simulations
-  results <- foreach(i = 1:nsim, .combine = 'rbind', .packages = c("tidyverse", "broom", "tictoc", "here")) %dopar% {
+  results_df <- foreach(i = 1:nsim, .combine = 'rbind', .packages = c("tidyverse", "broom", "tictoc", "here")) %dopar% {
     
     set.seed(seed[i])
     
@@ -92,7 +91,7 @@ for (scenario in c(10)) {
   ####################
   # save results
   filename <- paste0("scenario_", scenario, ".RDA")
-  save(results, file = here("results", filename))
+  save(results_df, file = here("results", filename))
 }
 
 # stop the parallel cluster
