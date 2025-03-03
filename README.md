@@ -1,17 +1,25 @@
-# bios731_hw1_qian
+# bios731_hw3_qian
 
 ## Project Directory
 
-This project runs simulations for BIOS 731 Homework 1.
+This project runs simulations for BIOS 731 Homework 3.
 
 
 ## Workflow
 
-1. Run the file `simulations/run_simulations.R`. This file runs simulations for different scenarios.The code is parallelized. Sources the following files:
-  * `source/01_simulate_data.R`: contains function used to simulate data
-  * `source/02_apply_methods.R`: contains function for applying the method (linear regression)
-  * `source/03_extract_estimates.R`: contains functions for performing nonparametric bootstrap and calculating the percentile and bootstrap t intervals
-Running this file outputs the simulation results to the `results` folder.
+1. Clone this repository to your project folder on cluster.
 
+```bash
+cd project_folder
+git clone https://github.com/wqian22/bios731_hw3_qian.git
+```
+2. Change directory to the `simulations` folder and run the script `run_simulations_hpc.sh`.
 
-2. Run the Rmarkdown file `analysis/HW1_report.Rmd`. This file will pull together the simulation results in `results` folder and generated some tables and plots.
+```bash
+cd bios731_hw3_qian/simulations
+sbatch run_simulations_hpc.sh
+```
+
+Running batch jobs outputs the simulation results to the `results` folder. You can transfer the simulation results from cluster to local using scp. 
+
+3. Run the Rmarkdown file `analysis/HW3_report.Rmd`. This file will pull together the simulation results in `results` folder and generated some plots.
