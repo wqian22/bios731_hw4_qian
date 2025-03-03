@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --array=1-18%18
+#SBATCH --array=1-4%4
 #SBATCH --job-name=simulations
 #SBATCH --partition=wrobel
 #SBATCH --output=run_simulations.out
