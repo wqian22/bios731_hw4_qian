@@ -1,0 +1,186 @@
+---
+title: "Homework 3"
+author: "Weijia Qian"
+header-includes: \usepackage{multirow}
+output:
+  pdf_document: default
+  html_document: default
+urlcolor: blue
+---
+
+```{r, include=FALSE}
+library(CCMHr)
+library(gt)
+library(here)
+library(tidyverse)
+knitr::opts_chunk$set(tidy = FALSE, echo = FALSE, warning = FALSE)
+```
+
+GitHub repository: https://github.com/wqian22/bios731_hw3_qian.git
+
+### Problem 1
+
+Create plots with *Monte Carlo standard error bars* to summarize the following:
+
+- Bias of $\hat{\beta}$
+- Coverage of $\hat{\beta}$
+- Power
+- Type 1 error
+
+Write 1-2 paragraphs summarizing these results.
+
+The bias of $\hat{\beta}$ is minimal (< 0.06) across all four scenarios (Figure 1). When the error distribution is normal, the Monte Carlo standard error of bias tends to be larger compared to the gamma distribution. The percentile interval consistently underestimates coverage probability relative to the Wald CI, failing to reach the nominal 95% level (Figure 2). Wald CI provides better coverage under gamma-distributed errors than under normal errors. The lowest coverage (90.3%) occurs with the percentile interval when $\beta = 0$ and errors follow a gamma distribution. Both Wald CI and the percentile interval achieve 100% power, correctly detecting a significant treatment effect when $\beta = 0.5$, regardless of the error distribution (Figure 3). When the true treatment effect is null ($\beta = 0$), the percentile interval exhibits a higher type I error rate than the Wald CI, particularly under gamma-distributed errors (Figure 4).
+
+Overall, the Wald CI performs better in terms of coverage probability and type I error control.
+
+
+
+The Monte Carlo standard error is calculated as:
+
+$$MCSE(\text{bias}) = \frac{\text{SD}(\text{bias})}{\sqrt{n}}$$
+
+
+```{r}
+# load simulation results
+rda_files <- list.files(here("results"), pattern = "\\.RDA$", full.names = TRUE)
+all_results <- list()
+for (i in 1:length(rda_files)) {
+  all_results[[i]] <- loadRDa(rda_files[[i]])
+}
+all_df <- do.call(rbind, all_results)
+
+# summarize the data
+nsim <- 475
+table_bias <- all_df %>%
+  group_by(family, n, beta_true) %>%
+  summarise(
+    mean_bias = mean(bias, na.rm = TRUE),
+    mcse = sd(bias) / sqrt(nsim),
+    .groups = "drop"
+  )
+
+# create ggplot
+ggplot(table_bias, aes(x = factor(beta_true), y = mean_bias, color = family)) +
+  geom_point(position = position_dodge(width = 0.5), size = 3) +
+  geom_errorbar(aes(ymin = mean_bias - mcse, ymax = mean_bias + mcse), 
+                width = 0.2, position = position_dodge(width = 0.5)) +
+  labs(
+    title = expression("Figure 1. Bias of " * hat(beta) * " with MCSE by Scenario"),
+    x = expression("True " * beta),
+    y = "Mean Bias",
+    color = "Error Distribution"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+# summarize the data
+table_cover <- all_df %>%
+  group_by(family, n, beta_true) %>%
+  summarise(
+    mean_cover_wald = mean(coverage_wald, na.rm = TRUE),
+    mcse_wald = sd(coverage_wald) / sqrt(nsim),
+    mean_cover_percentile = mean(coverage_percentile, na.rm = TRUE),
+    mcse_percentile = sd(coverage_percentile) / sqrt(nsim),
+    .groups = "drop"
+  )  %>%
+  pivot_longer(cols = c(mean_cover_wald, mean_cover_percentile), 
+               names_to = "method", values_to = "mean_cover") %>%
+  pivot_longer(cols = c(mcse_wald, mcse_percentile), 
+               names_to = "mcse_method", values_to = "mcse") %>%
+  filter((method == "mean_cover_wald" & mcse_method == "mcse_wald") | 
+         (method == "mean_cover_percentile" & mcse_method == "mcse_percentile")) %>%
+  mutate(method = recode(method, 
+                         "mean_cover_wald" = "Wald CI",
+                         "mean_cover_percentile" = "Percentile Interval"),
+         family_label = paste("error:", family))
+
+# Plot the coverage with MCSE error bars
+ggplot(table_cover, aes(x = factor(beta_true), y = mean_cover, color = method, shape = method)) +
+  geom_point(position = position_dodge(width = 0.4), size = 3) +
+  geom_errorbar(aes(ymin = mean_cover - mcse, ymax = mean_cover + mcse), 
+                width = 0.2, position = position_dodge(width = 0.4)) +
+  facet_wrap(~ family_label) +
+  labs(title = expression("Figure 2. Coverage Probability of " * hat(beta) * " with MCSE by Scenario and Method"),
+       x = expression("True " * beta),
+       y = "Coverage Probability",
+       color = "Method",
+       shape = "Method") +
+  theme_minimal() +
+  scale_color_manual(values = c("Wald CI" = "blue", "Percentile Interval" = "red"))
+```
+
+
+```{r}
+table_power <- all_df %>%
+  filter(beta_true == 0.5) %>%
+  mutate(ci_lb_wald = beta_hat - qnorm(0.975) * se_wald,
+         ci_ub_wald = beta_hat - qnorm(0.975) * se_wald,
+         ci_lb_percentile = beta_hat - qnorm(0.975) * se_boot,
+         ci_ub_percentile = beta_hat - qnorm(0.975) * se_boot,
+         power_wald = !(ci_lb_wald < 0 & ci_ub_wald > 0),
+         power_percentile = !(ci_lb_percentile < 0 & ci_ub_percentile > 0)) %>%
+  group_by(family, n, beta_true) %>%
+  summarise(
+    mean_power_wald = mean(power_wald, na.rm = TRUE),
+    mcse_wald = sd(power_wald) / sqrt(nsim),
+    mean_power_percentile = mean(power_percentile, na.rm = TRUE),
+    mcse_percentile = sd(power_percentile) / sqrt(nsim),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(cols = c(mean_power_wald, mean_power_percentile), 
+               names_to = "method", values_to = "mean_power") %>%
+  pivot_longer(cols = c(mcse_wald, mcse_percentile), 
+               names_to = "mcse_method", values_to = "mcse") %>%
+  filter((method == "mean_power_wald" & mcse_method == "mcse_wald") | 
+         (method == "mean_power_percentile" & mcse_method == "mcse_percentile")) %>%
+  mutate(method = recode(method, 
+                         "mean_power_wald" = "Wald CI",
+                         "mean_power_percentile" = "Percentile Interval"),
+         family_label = paste("error:", family))
+
+ggplot(table_power, aes(x = factor(family), y = mean_power, fill = method)) +
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single"), color = "black") +
+  labs(title = "Figure 3. Power by Error Distribution and Method",
+       x = "Error Distribution",
+       y = "Power",
+       fill = "Method") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Wald CI" = "blue", "Percentile Interval" = "red"))
+```
+
+
+```{r}
+table_type1 <- all_df %>%
+  filter(beta_true == 0) %>%
+  group_by(family, n, beta_true) %>%
+  summarise(
+    mean_type1_wald = 1 - mean(coverage_wald, na.rm = TRUE),
+    mcse_wald = sd(coverage_wald) / sqrt(nsim),
+    mean_type1_percentile = 1 - mean(coverage_percentile, na.rm = TRUE),
+    mcse_percentile = sd(coverage_percentile) / sqrt(nsim),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(cols = c(mean_type1_wald, mean_type1_percentile), 
+               names_to = "method", values_to = "mean_type1") %>%
+  pivot_longer(cols = c(mcse_wald, mcse_percentile), 
+               names_to = "mcse_method", values_to = "mcse") %>%
+  filter((method == "mean_type1_wald" & mcse_method == "mcse_wald") | 
+         (method == "mean_type1_percentile" & mcse_method == "mcse_percentile")) %>%
+  mutate(method = recode(method, 
+                         "mean_type1_wald" = "Wald CI",
+                         "mean_type1_percentile" = "Percentile Interval"),
+         family_label = paste("error:", family))
+
+ggplot(table_type1, aes(x = factor(family), y = mean_type1, color = method)) +
+  geom_point(position = position_dodge(width = 0.4), size = 3) +
+  geom_errorbar(aes(ymin = mean_type1 - mcse, ymax = mean_type1 + mcse), 
+                width = 0.2, position = position_dodge(width = 0.4)) +
+  labs(title = "Figure 4. Type 1 Error with MCSE by Error Distribution and Method",
+       x = "Error Distribution",
+       y = "Type 1 Error",
+       color = "Method") +
+  theme_minimal() +
+  scale_color_manual(values = c("Wald CI" = "blue", "Percentile Interval" = "red"))
+```
