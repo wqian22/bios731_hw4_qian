@@ -1,0 +1,276 @@
+---
+title: "Homework 4"
+author: "Weijia Qian"
+header-includes: \usepackage{multirow}
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+urlcolor: blue
+---
+
+```{r, include=FALSE}
+library(corrplot)
+library(glmnet)
+library(gt)
+library(here)
+library(LowRankQP)
+library(lpSolve)
+library(quantreg)
+library(tidyverse)
+
+knitr::opts_chunk$set(tidy = FALSE, echo = FALSE, warning = FALSE)
+
+# load data
+df <- readRDS(here("data", "cannabis-2.rds"))
+```
+
+## Problem 0 
+
+GitHub repository: https://github.com/wqian22/bios731_hw4_qian.git
+
+## Problem 1: Exploratory data analysis
+
+Perform some EDA for this data. Your EDA should explore the following questions:
+
+- What are $n$ and $p$ for this data?
+- What is the distribution of the outcome?
+- How correlated are variables in the dataset?
+
+Summarize key findings from your EDA in one paragraph and 2-3 figures or tables. 
+
+This dataset consists of 57 observations and 29 variables, including 27 covariates of interests. The outcome variable `t_mmr1` is right-skewed (Figure 1a),  while its log-transformed version is approximately normally distributed (Figure 1b). Several variable pairs show strong positive correlations, such as  `p_fpc1` and `p_change`, `i_prop_false_timeout` and `i_prop_failed2`, `i_judgement_time1` and `i_judgement_time2`, `i_memory_time12` and `i_memory_time34`, and `h_dbp` and `h_sbp`. Strong negative correlations are observed between `p_change` and `p_auc`, `i_rep_shapes34` and `i_memory_time34`, and `i_rep_shapes34` and `i_composite_score`. Most other variable pairs show weak to moderate correlations (Figure 2).
+
+```{r}
+# n and p for this data
+n <- nrow(df)
+p <- ncol(df)
+
+# distribution of the outcome
+default_par <- par()
+par(mfrow = c(1, 2))
+hist(df$t_mmr1, main = "Figure 1a. Distribution of the Outcome (t_mmr1)", cex.main = 0.7)
+hist(log(df$t_mmr1), main = "Figure 1b. Distribution of the Log-Transformed Outcome", cex.main = 0.7)
+par(default_par)
+
+# correlation plot of variables
+corr <- cor(df[, -1])
+corrplot(corr, type = "upper", title = "Figure 2. Pearson Correlations between Variables", tl.cex = 0.75, mar = c(1, 1, 2, 1))
+```
+
+## Problem 2: Quantile regression
+
+Use linear programming to estimate the coefficients for a quantile regression. You need to write a
+function named `my_rq`, which takes a response vector $y$, a covariate matrix $X$ and quantile $\tau$ , and
+returns the estimated coefficients. Existing linear programming functions can be used directly to
+solve the LP problem (for example, `simplex` function in the `boot` package, or `lp` function in the `lpSolve`
+package). 
+
+* Use your function to model `t_mmr1` from the cannabis data using `p_change` (percent change in pupil diameter in response to light), `h_hr` (heart rate), and `i_composite_score` (a composite score of the ipad variables) as variables.
+* Compare your results with though estimated using the `rq` function in R at quantiles $\tau \in \{0.25, 0.5, 0.75\}$.
+* Compare with mean obtain using linear regression
+* Summarize findings
+
+When explaining your results, be sure to explain what LP method you used for estimating quantile regression.
+
+In my `my_rq` function, I used the `lp` function in the `lpSolve` package. By default, it applies a revised Simplex method to solve the LP problem. The regression coefficient estimates from `my_rq` and `rq` are identical across all quantiles and variables, indicating that linear programming can accurately replicate the results of the standard `rq` function. The associations between `p_change` (percent change in pupil diameter in response to light) and `h_hr` (heart rate) with the outcome are very weak (Table 1). For `i_composite_score`, the quantile estimates vary significantly: at $\tau = 0.25$, the estimate is positive (0.3841), while at $\tau = 0.75$, it is negative (-0.5809). This suggests that the relationship between `i_composite_score` and the outcome differs across the outcome distribution. While quantile regression captures this variation, linear regression does not. Estimates from the linear regression fall within the range of quantile regression estimates.
+
+```{r}
+# my function
+my_rq <- function(y, X, tau) {
+  
+  # create design matrix with intercept
+  n <- length(y)
+  X <- cbind(1, X) 
+  p <- ncol(X)
+  
+  # expand the design matrix to allow beta^+ and beta^-
+  X_expanded <- cbind(X, -X)
+  
+  # objective function
+  f.obj <- c(rep(0, 2 * p), rep(tau, n), rep(1 - tau, n))
+  # constraint matrix: y - Xb = positive residuals - negative residuals
+  f.con <- cbind(X_expanded, diag(n), -diag(n))
+  # right-hand side of constraints
+  f.rhs <- y
+  # equality constraints
+  f.dir <- rep("=", n)
+  # solve LP problem
+  result <- lp("min", f.obj, f.con, f.dir, f.rhs)
+    
+  # extract beta coefficients (beta = beta^+ - beta^-)
+  beta_hat <- result$solution[1:p] - result$solution[(p+1):(2*p)]
+  
+  return(beta_hat)
+}
+
+# prepare data
+y <- df$t_mmr1
+X <- df[, c("p_change", "h_hr", "i_composite_score")]
+tau_vec <- c(0.25, 0.5, 0.75)
+
+# run my_rq()
+my_rq_res <- sapply(tau_vec, function(tau) {
+  my_rq(y, X, tau)
+})
+
+# run quantreg::rq()
+rq_res <- sapply(tau_vec, function(tau) {
+  coef(rq(t_mmr1 ~ p_change + h_hr + i_composite_score, tau = tau, data = df))
+})
+
+# run linear regression
+lm_res <- coef(lm(t_mmr1 ~ p_change + h_hr + i_composite_score, data = df))
+
+# summarize results
+df_summary <- data.frame(
+  tau = rep(tau_vec, each = 3),
+  variable = rep(c("p_change", "h_hr", "i_composite_score"), times = length(tau_vec)),
+  my_rq = as.vector(my_rq_res[-1, ]), # remove intercept
+  rq = as.vector(rq_res[-1, ]),
+  lm = lm_res[-1]
+) %>%
+  pivot_longer(cols = c("my_rq", "rq", "lm"),
+               names_to = "method",
+               values_to = "value") %>%
+  filter(!(method == "lm" & tau %in% c(0.25, 0.75))) %>%
+  pivot_wider(names_from = c(variable, tau), values_from = value, names_sep = "_tau_")
+
+# create a gt table
+df_summary %>%
+    gt() %>%
+    tab_spanner(label = "p_change", columns = starts_with("p_change")) %>%
+    tab_spanner(label = "h_hr", columns = starts_with("h_hr_")) %>%
+    tab_spanner(label = "i_composite_score", columns = starts_with("i_composite_score")) %>%
+    cols_label(ends_with("tau_0.25") ~ "\u03C4 = 0.25",
+               ends_with("tau_0.5") ~ "\u03C4 = 0.5",
+               ends_with("tau_0.75") ~ "\u03C4 = 0.75") %>%
+   tab_header(title = "Table 1. Comparison of Quantile and Linear Regression Estimates") %>%
+   cols_align(align = "center", columns = everything()) %>%
+   fmt_number(columns = where(is.numeric), decimals = 4) %>%
+   fmt_missing(columns = everything(), missing_text = "") %>%
+   opt_table_outline()
+```
+
+
+## Problem 3: Implementation of LASSO
+
+
+As illustrated in class, a LASSO problem can be rewritten as a quadratic programming problem.
+
+1. Many widely used QP solvers require that the matrix in the quadratic function for the second
+order term to be positive definite (such as `solve.QP` in the `quadprog` package). Rewrite the
+quadratic programming problem for LASSO in matrix form and show that the matrix is not
+positive definite, thus QP solvers like `solve.QP` cannot be used. 
+
+Define:
+
+* $X \in \mathbb{R}^{n \times p}$  as the design matrix
+* $y \in \mathbb{R}^{n}$  as the response vector
+* $\beta = \beta^+ - \beta^-$
+
+Rewrite the objective function in matrix form:
+
+\begin{aligned}
+&\min_{\beta^+, \beta^-} \left( y - X (\beta^+ - \beta^-) \right)^T \left( y - X (\beta^+ - \beta^-) \right)\\
+\Rightarrow
+&
+\min_{\beta^+, \beta^-} y^T y - 2 y^T X (\beta^+ - \beta^-) + (\beta^+ - \beta^-)^T X^T X (\beta^+ - \beta^-)\\
+\Rightarrow 
+&\min_{\beta^+, \beta^-} \frac{1}{2} (\beta^+ - \beta^-)^T X^TX (\beta^+ - \beta^-) - y^TX (\beta^+ - \beta^-) \quad(\text{ignore the constant term }y^Ty)
+
+\end{aligned}
+
+
+Rewrite the L1 constraint in matrix form:
+
+$$ \sum_j (\beta_j^+ + \beta_j^-) \leq \lambda \Rightarrow \mathbf{1}^T (\beta^+ + \beta^-) \leq \lambda $$
+with non-negativity constraints $\beta^+ \geq 0$, $\beta^- \geq 0$.
+
+Therefore, the full quadratic program is
+$$
+\min_{\beta^+, \beta^-} f(z) = \frac{1}{2} z^T B z - c^T z\\
+s.t. Az \le \lambda, z \ge 0.
+$$
+where:
+
+* $z = (\beta^+, \beta^-) \in \mathbb{R}^{2p}$
+* $B = X^T X $
+* $c = X^T y$
+* $A = [\mathbf{1}_p^T, \mathbf{1}_p^T]$
+
+Show that $B = X^T X$  is not positive definite:
+
+A matrix is positive definite if all its eigenvalues are strictly positive. Since $B = X^T X$, if $X$ has linearly dependent columns, $X^T X$ will have zero eigenvalues. Thus, $B$ is positive semi-definite, but not always positive definite.
+
+
+2. The `LowRankQP` function in the `LowRankQP` package can handle the non positive definite situation. Use the
+matrix format you derived above and `LowRankQP` to write your own function `my_lasso()` to
+estimate the coefficients for a LASSO problem. Your function needs to take three parameters:
+$Y$ (response), $X$ (predictor), and $lambda$ (tuning parameter), and return the estimated coefficients.
+
+* Use your function to model `log(t_mmr1)` from the cannabis data using all other variables as potential covariates in the model
+* Compare your results with those estimated using the `cv.glmnet` function in R from the `glmnet` package
+* Summarize findings
+
+The results will not be exactly the same because the estimation procedures are different, but trends (which variables are selected) should be similar.
+
+`my_lasso` and `cv.glmnet` show general agreement in variable selection (Figure 3). Both methods identify a positive estimate for `h_hr` and negative estimates for `i_prop_failed2` and `i_time_outside_reticle`, though the magnitudes of these estimates are smaller in `my_lasso`. There are differences in small coefficients. `i_reaction_time2` and `p_fpc2` have small but nonzero coefficients in `my_lasso`, but they appear to be zero in `cv.glmnet`. Conversely, `p_fpc1` was selected by `cv.glmnet` but not by `my_lasso`.
+
+```{r}
+my_lasso <- function(Y, X, lambda) {
+  n <- nrow(X)
+  p <- ncol(X)
+  
+  # create B and c for the quadratic program
+  B <- crossprod(X, X) # p x p
+  c <- -crossprod(X, Y) # p x 1
+  
+  # convert to the expanded form with non-negative variables
+  B_expanded <- rbind(cbind(B, -B), cbind(-B, B))  # 2p x 2p
+  c_expanded <- c(c, -c)  # 2p x 1
+  
+  # constraints
+  A <- matrix(rep(1, 2*p), ncol = 2*p) # 1 x 2p
+  b <- lambda # 1 x 1
+
+  # solve the quadratic program
+  result <- LowRankQP(B_expanded, c_expanded, A, b, u = rep(100, 2*p))
+  
+  # extract beta coefficients (beta = beta^+ - beta^-)
+  beta_hat <- result$alpha[1:p] - result$alpha[(p+1):(2*p)]
+  
+  return(beta_hat)
+}
+
+# prepare data
+Y <- log(df$t_mmr1 + 1e-4)
+X <- as.matrix(df[, -c(1, 2)])
+X <- scale(X) # standardize predictors
+
+# run my_lasso()
+beta_my_lasso <- my_lasso(Y, X, lambda = 0.5)
+
+# fit LASSO using cross-validation for glmnet
+lasso_cv <- cv.glmnet(X, Y, alpha = 1)
+
+# get coefficients at the best lambda
+beta_glmnet <- coef(lasso_cv, s = "lambda.min")[-1]  # remove intercept
+
+# prepare data for plotting
+df_plot <- data.frame(
+  variable = colnames(df)[-c(1,2)],
+  my_lasso = beta_my_lasso,
+  glmnet = beta_glmnet
+) %>%
+  pivot_longer(cols = -variable, names_to = "method", values_to = "estimate")
+
+# create bar plot
+ggplot(df_plot, aes(x = variable, y = estimate, fill = method)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Figure 3. Comparison of LASSO Coefficient Estimates",
+       x = "Variable", y = "Coefficient Estimate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
